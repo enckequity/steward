@@ -30,6 +30,8 @@ class SecurityBase(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         self.env, self.config = {}, {}
         self._saved = (steward._home, steward._get_session_env, steward._load_hermes_config)
+        self._saved_card = steward._card_skip_reason
+        steward._card_skip_reason = lambda: None   # a chat surface where the host shows its schedule card
         steward._home = lambda: self.tmp
         steward._get_session_env = lambda name: self.env.get(name, "")
         steward._load_hermes_config = lambda: self.config
@@ -49,6 +51,7 @@ class SecurityBase(unittest.TestCase):
 
     def tearDown(self):
         steward._home, steward._get_session_env, steward._load_hermes_config = self._saved
+        steward._card_skip_reason = self._saved_card
         steward._CTX = None
 
     def call(self, name, **args):
@@ -135,11 +138,11 @@ class CronSchedulingTests(SecurityBase):
 
     def test_blocked_without_allow_agent_scheduling(self):
         r = self.call("steward_setup", departments=[{"name": "HR", "target": "whatsapp:9@g.us"}])
-        self.assertFalse(r["success"]); self.assertIn("allow_agent_scheduling", r["error"])
+        self.assertFalse(r["success"]); self.assertIn("scheduled run", r["error"])
         state = json.loads((self.tmp / "steward" / "state.json").read_text())
         self.assertNotIn("HR", [d["name"] for d in state["departments"]])   # nothing saved
         r = self.call("steward_publish", confirm=True)
-        self.assertFalse(r["success"]); self.assertIn("allow_agent_scheduling", r["error"])
+        self.assertFalse(r["success"]); self.assertIn("scheduled run", r["error"])
         self.assertEqual(self.cron.calls, [])
 
     def test_settings_only_setup_refused_in_cron(self):

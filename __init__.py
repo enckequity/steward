@@ -56,26 +56,36 @@ def _err(msg: str, **data) -> str:
 
 def _dispatch(name: str, args: dict) -> str:
     if _CTX is None:
-        raise RuntimeError("Steward is not registered with Hermes")
+        raise RuntimeError("Steward isn't switched on yet")
     return _CTX.dispatch_tool(name, args)
 
 
 # ─── who is asking (publish / cron safety) ─────────────────────────────────────
 
-# The trusted operator is a person at this machine: CLI, TUI, desktop app or the gateway's LOCAL platform.
-# Webhooks, the API server, Microsoft Graph webhooks and cron runs are NOT the operator. An empty
-# platform and source (plain unit tests, Hermes not importable) counts as local only outside cron.
+# The trusted operator is the workspace owner (TeamShift fork, enckequity/teamshift#4650):
+#   * a person at this machine: CLI, TUI, desktop app or the gateway's LOCAL platform;
+#   * the owner's signed-in portal (the API server platform), which the host treats as the owner:
+#     only from a non-group session that carries no chat sender (a portal turn binds none), so a
+#     future shared-room path that names its member fails closed;
+#   * the owner's own direct chat on a messaging platform, when its "platform:user_id" is listed
+#     in the plugin setting owner_ids (plugins.entries.steward.settings.owner_ids). Never a group.
+# Webhooks, Microsoft Graph webhooks, every other chat and every cron run are NOT the operator. An
+# empty platform and source (plain unit tests, host not importable) counts as local only outside cron.
 _OPERATOR_SURFACES = frozenset({"", "cli", "tui", "desktop", "local"})
+_PORTAL_SURFACES = frozenset({"api_server"})
 _PRIVATE_CHAT_TYPES = frozenset({"dm", "private", "direct"})
 _GROUP_CHAT_TYPES = frozenset({"group", "supergroup", "channel", "forum", "guild", "thread"})
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
 NOT_FOUNDER = "Only the founder can publish: reply send in the founder's private chat with Steward."
 NOT_FOUNDER_SETUP = ("Only the founder can change Steward's setup: do it in the founder's private chat "
-                     "with Steward or on the computer running Hermes.")
+                     "with me, or in the owner's own chat with me.")
 NOT_FOUNDER_PACK = ("The founder pack, past weeks and status are only for the founder: ask in the "
                     "founder's private chat with Steward. Anyone can see the staff version.")
-FOUNDER_TARGET_LOCAL_ONLY = ("The founder chat can only be set or changed on the computer running Hermes "
-                             "(hermes CLI or desktop app), not from a chat.")
+FOUNDER_TARGET_LOCAL_ONLY = ("The founder chat can only be set or changed by the owner in their own chat "
+                             "with me, not from a team or founder chat.")
+NO_SCHEDULE_CARD = ("Settings saved, but I can't add the weekly schedule here because there's no way to ask you "
+                    "to approve it in this chat. Ask me to set up Steward's schedule in your own chat with me "
+                    "and approve it there.")
 _BAD_TARGET_PLATFORMS = frozenset({"all", "local", "origin", "room"})
 _TARGET_RE = re.compile(r"[a-z_]+:[^,\s]+")
 MAX_ATTACHMENTS = 10
@@ -127,12 +137,81 @@ def _in_cron() -> bool:
     return _get_session_env("HERMES_CRON_SESSION").strip().lower() in _TRUTHY
 
 
+def _owner_ids() -> set:
+    """The owner's own chat identities ("platform:user_id", lower-cased) from the plugin setting."""
+    raw = None
+    try:
+        if _CTX is not None and hasattr(_CTX, "get_config"):
+            raw = _CTX.get_config("owner_ids", [])
+    except Exception:
+        raw = None
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple)):
+        return set()
+    out = set()
+    for item in raw[:64]:
+        platform, _, uid = str(item or "").strip().partition(":")
+        if platform.strip() and uid.strip():
+            out.add(f"{platform.strip().lower()}:{_norm_id(uid)}")
+    return out
+
+
+def _is_owner_chat(s: dict) -> bool:
+    """The owner writing in their own direct chat, matched on platform and sender id. Never a group."""
+    platform = s["platform"].lower()
+    if (not platform or platform in _OPERATOR_SURFACES or platform in _PORTAL_SURFACES
+            or _in_group(s) or s["chat_type"].lower() not in _PRIVATE_CHAT_TYPES):
+        return False
+    owners = _owner_ids()
+    for uid in (s["user_id"], s["user_id_alt"]):
+        if uid and any(o.partition(":")[0] == platform and _same_id(o.partition(":")[2], uid) for o in owners):
+            return True
+    return False
+
+
+def _is_portal(s: dict) -> bool:
+    """The owner's signed-in portal: the API server platform, never a group, no chat sender bound."""
+    return (s["platform"].lower() in _PORTAL_SURFACES and s["source"].lower() in _OPERATOR_SURFACES
+            and not _in_group(s) and not s["user_id"] and not s["user_id_alt"])
+
+
+def _is_local(s: dict) -> bool:
+    return s["platform"].lower() in _OPERATOR_SURFACES and s["source"].lower() in _OPERATOR_SURFACES
+
+
 def _is_operator() -> bool:
-    """A person at the machine running Hermes (CLI, TUI, desktop, LOCAL). Never a cron run."""
+    """The workspace owner: at the machine (CLI, TUI, desktop, LOCAL), in their portal, or in their own
+    direct chat listed in owner_ids. Never a cron run, never a group chat."""
     if _in_cron():
         return False
     s = _session_identity()
-    return s["platform"].lower() in _OPERATOR_SURFACES and s["source"].lower() in _OPERATOR_SURFACES
+    return _is_local(s) or _is_portal(s) or _is_owner_chat(s)
+
+
+def _schedule_card_blocked() -> bool:
+    """True when a job Steward creates would be saved with no "Schedule this job?" card because nobody
+    can answer one on this surface (the portal's API server, webhooks). The machine itself and an
+    explicit approvals-off setting keep the host's own behaviour; "already allowed new jobs" is consent."""
+    s = _session_identity()
+    if _is_local(s) or _in_cron():   # cron scheduling has its own gate (_cron_scheduling_blocked)
+        return False
+    try:
+        reason = _card_skip_reason()
+    except Exception:
+        return True    # fail closed
+    return bool(reason) and "nobody can answer" in str(reason)
+
+
+def _card_skip_reason():
+    """The host's own answer to "would cronjob_manage show its schedule card in this turn?": None when it
+    would, else why not. None when the host isn't importable (plain unit tests: nothing to ask)."""
+    try:
+        from tools.approval import schedule_card_skip_reason
+        from tools.approval_context import get_current_session_key
+    except ImportError:
+        return None
+    return schedule_card_skip_reason(session_key=get_current_session_key() or "", live=True)
 
 
 def _in_group(s: dict) -> bool:
@@ -241,8 +320,8 @@ def _cron_scheduling_blocked() -> bool:
 
 def _require_cron_scheduling(what: str) -> None:
     if _cron_scheduling_blocked():
-        raise ValueError(f"{what} needs Hermes' scheduler, which is off inside cron runs; turn on "
-                         "cron.allow_agent_scheduling in config.yaml or run it from a chat")
+        raise ValueError(f"{what} needs the scheduler, which is off inside scheduled runs; ask me "
+                         "from a chat instead")
 
 
 def _guard(fn):
@@ -273,8 +352,8 @@ def _authorize_setup(state: dict, args: dict) -> None:
         return
     founder = str(state.get("founder_target") or "").strip()
     if not founder:
-        raise ValueError("First-time setup has to be done on the computer running Hermes "
-                         "(hermes CLI or desktop app), where the founder chat is set.")
+        raise ValueError("First-time setup has to be done by the owner in their own chat with me, "
+                         "where the founder chat is set.")
     if not _in_cron():   # a cron run got here only because cron.allow_agent_scheduling is on
         _require_founder(state, NOT_FOUNDER_SETUP)
     new = args.get("founder_target")
@@ -299,9 +378,8 @@ def _validate_setup_targets(args: dict) -> None:
 def setup(args, **kw):
     schedule = args.get("schedule_jobs", True)
     if _cron_scheduling_blocked():
-        raise ValueError("Steward's setup can't be changed inside a cron run unless "
-                         "cron.allow_agent_scheduling is on in config.yaml; change it from the "
-                         "founder's private chat or the Hermes CLI")
+        raise ValueError("Steward's setup can't be changed inside a scheduled run; change it from "
+                         "the founder's private chat or the owner's own chat with me")
     _check_encodable(args, "the setup")
     path = _state_path()
     state = core.load_state(path)
@@ -313,6 +391,10 @@ def setup(args, **kw):
                          "lead: 'Tunde', target: 'whatsapp:1203630...@g.us'}")
     _check_encodable(state, "the setup")
     jobs = None
+    notes = []
+    if schedule and _schedule_card_blocked():
+        schedule = False
+        notes.append(NO_SCHEDULE_CARD)
     if schedule:
         # dry run first: any bad value fails here, before a single old job is removed
         _check_encodable(scheduler.plan_jobs(state, path, _scripts_dir()), "the schedule")
@@ -321,7 +403,6 @@ def setup(args, **kw):
         jobs = scheduler.apply_jobs(state, path, _scripts_dir(), _dispatch)
         core.save_state(path, state)
     no_target = [d["name"] for d in state["departments"] if not d.get("target")]
-    notes = []
     if no_target:
         notes.append(f"No group set for: {', '.join(no_target)} — they won't get check-ins yet.")
     if not state.get("founder_target"):
@@ -443,12 +524,14 @@ def publish(args, **kw):
         raise ValueError("publishing needs the founder's approval: call again with confirm=true "
                          "only after the founder said send")
     if _in_cron():
-        raise ValueError("Publishing never runs inside a cron run, even with "
-                         "cron.allow_agent_scheduling on: the founder has to reply send in their "
-                         "private chat with Steward.")
+        raise ValueError("Publishing never runs inside a scheduled run: the founder has to reply "
+                         "send in their private chat with me.")
     path = _state_path()
     state = core.load_state(path)
     _require_founder(state)
+    if _schedule_card_blocked():
+        raise ValueError("I can't post the staff pack from here because there's no way to ask you to "
+                         "approve it in this chat. Reply send in your own chat with me instead.")
     if not state.get("all_staff_target"):
         raise ValueError("no all-staff group set; run steward_setup with all_staff_target first")
     key = _week_arg(args, state)
@@ -525,7 +608,7 @@ SCHEMAS = {
             "Set up or change Steward, the weekly department-report chief of staff. Saves the company, "
             "departments and their group chats, and schedules: a check-in in each department group, "
             "a nudge only to teams that haven't replied, a status note and a weekly pack (with voice "
-            "brief) to the founder. Re-running replaces Steward's old jobs. Chat targets use Hermes "
+            "brief) to the founder. Re-running replaces Steward's old jobs. Chat targets use the "
             "delivery format 'platform:chat_id' (e.g. 'whatsapp:120363...@g.us', 'telegram:-100123', "
             "'slack:C0123'). Ask the user for anything missing; don't invent chat ids."),
         "parameters": {"type": "object", "properties": {
@@ -562,7 +645,7 @@ SCHEMAS = {
             "Read a report someone sent as a file instead of a voice note: Word (.docx), Excel (.xlsx), "
             "CSV, text or PDF. Returns its text. For photos (site diary, whiteboard, printed sheet) it "
             "says to use vision_analyze. Use the saved path from the attachment note. Only files "
-            "people sent in the chat (Hermes's incoming media folders) can be read."),
+            "people sent in the chat (the incoming media folders) can be read."),
         "parameters": {"type": "object", "properties": {"path": {"type": "string"}},
                        "required": ["path"]}}, "📎"),
     "steward_record_report": ({

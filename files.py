@@ -194,7 +194,7 @@ def _pdf(path: Path) -> str | None:
 
 MEDIA_DIRS = (("cache/images", "image_cache"), ("cache/audio", "audio_cache"),
               ("cache/videos", "video_cache"), ("cache/documents", "document_cache"))
-OUTSIDE_MEDIA = ("Steward only reads files people sent in the chat (Hermes's incoming media "
+OUTSIDE_MEDIA = ("Steward only reads files people sent in the chat (the incoming media "
                  "folders); this path is outside them")
 
 

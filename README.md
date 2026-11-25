@@ -217,6 +217,22 @@ limit the platform's toolsets the same way. Groq's key also powers voice-note tr
 Steward has no extra Python dependencies. PDF text extraction uses `pypdf` if it's installed;
 otherwise Steward reads scanned PDFs with vision instead.
 
+**Who counts as the owner (this fork).** Besides a local session (CLI, TUI, desktop), the owner may
+run first-time setup and set the founder chat from their signed-in portal (`api_server`, never a
+group, no chat sender bound) or from their own direct chat when its identity is listed:
+
+```yaml
+plugins:
+  entries:
+    steward:
+      settings:
+        owner_ids: ["relay:+15550001111"]   # "platform:user_id"; direct chats only, never a group
+```
+
+Every job still goes through `cronjob_manage` and its "Schedule this job?" card. Where no card can
+be shown (the portal's API server), setup saves the settings but schedules nothing, and publishing
+is refused; the owner finishes from a chat where the card appears.
+
 ## Privacy
 - Reports live in `HERMES_HOME/steward/state.json` (file mode 600) on the machine that runs Hermes.
   Copies of files that were sent in are kept next to it.

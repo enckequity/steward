@@ -15,7 +15,7 @@ Call `steward_checkin` for the department and post its `message`, following its
 ## When someone in a department group replies
 The reply can come as:
 - **Voice note** in any language: English, French, Hindi, Spanish, Portuguese, Arabic,
-  Swahili, Chinese (Mandarin, Cantonese), Pidgin, Yoruba, Hausa, Tagalog… Hermes transcribes it for you. Mixed languages
+  Swahili, Chinese (Mandarin, Cantonese), Pidgin, Yoruba, Hausa, Tagalog… It arrives transcribed for you. Mixed languages
   (Hinglish, Franglais, Pidgin) are fine. Save the report in plain English and set `language`.
 - **Text**: a few lines or a long paste.
 - **Photo**: a handwritten site diary, a whiteboard, a printed sheet. Read it with
@@ -44,8 +44,8 @@ Then:
   with `audience: "founder"` or any `week`) and `steward_publish`. In a group these are refused;
   don't try them and don't share the founder pack, status or other teams' updates there. Anyone
   may see the staff pack for this week (`audience: "staff"`). Settings (departments, groups,
-  schedule) are changed only by the founder in their private chat or on the computer running
-  Hermes; the founder chat itself only on that computer.
+  schedule) are changed only by the founder in their private chat or by the owner in their own
+  chat with you; the founder chat itself only by the owner.
 - Attach at most 10 photos/files per report.
 - Never invent numbers, names or dates. If a number is unclear, leave it out or ask.
 - Keep each line short: one sentence per item.

@@ -25,7 +25,7 @@ from . import core
 
 PLUGIN_DIR = Path(__file__).resolve().parent
 
-SCRIPT_TEMPLATE = '''# Written by the Steward Hermes plugin. Safe to delete; re-run steward_setup to recreate.
+SCRIPT_TEMPLATE = '''# Written by the Steward plugin. Safe to delete; re-run steward_setup to recreate.
 import importlib.util, sys
 _spec = importlib.util.spec_from_file_location("steward_core", {core_path!r})
 core = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(core)

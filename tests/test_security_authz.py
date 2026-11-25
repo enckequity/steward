@@ -41,6 +41,8 @@ class Base(unittest.TestCase):
         self.env, self.config, self.job_id = {}, {}, ""
         self._saved = (steward._home, steward._get_session_env, steward._load_hermes_config,
                        steward._cron_job_id)
+        self._saved_card = steward._card_skip_reason
+        steward._card_skip_reason = lambda: None   # a chat surface where the host shows its schedule card
         steward._home = lambda: self.tmp
         steward._get_session_env = lambda name: self.env.get(name, "")
         steward._load_hermes_config = lambda: self.config
@@ -62,6 +64,7 @@ class Base(unittest.TestCase):
     def tearDown(self):
         (steward._home, steward._get_session_env, steward._load_hermes_config,
          steward._cron_job_id) = self._saved
+        steward._card_skip_reason = self._saved_card
         steward._CTX = None
 
     def call(self, name, **args):
@@ -181,7 +184,7 @@ class SetupAuthzTests(Base):
     def test_cron_setup_refused_without_allow_even_settings_only(self):
         self.cron_run()
         self.refused(self.call("steward_setup", all_staff_target="whatsapp:" + MEMBER, schedule_jobs=False),
-                     "allow_agent_scheduling")
+                     "scheduled run")
         self.assertEqual(self.state()["all_staff_target"], ALL_STAFF)
 
     def test_cron_setup_with_allow_never_changes_founder(self):
@@ -201,7 +204,9 @@ class OperatorTests(Base):
                  ({"HERMES_CRON_SESSION": "1"}, False),
                  ({"HERMES_SESSION_SOURCE": "cli", "HERMES_CRON_SESSION": "true"}, False),
                  ({"HERMES_SESSION_PLATFORM": "webhook"}, False),
-                 ({"HERMES_SESSION_PLATFORM": "api_server"}, False),
+                 ({"HERMES_SESSION_PLATFORM": "api_server"}, True),   # TeamShift: the owner's portal
+                 ({"HERMES_SESSION_PLATFORM": "api_server", "HERMES_SESSION_CHAT_TYPE": "group"}, False),
+                 ({"HERMES_SESSION_PLATFORM": "api_server", "HERMES_SESSION_USER_ID": "guest"}, False),
                  ({"HERMES_SESSION_PLATFORM": "msgraph_webhook"}, False),
                  ({"HERMES_SESSION_PLATFORM": "whatsapp", "HERMES_SESSION_SOURCE": "cli"}, False),
                  ({"HERMES_SESSION_PLATFORM": "", "HERMES_SESSION_SOURCE": "whatsapp"}, False)]
@@ -210,7 +215,8 @@ class OperatorTests(Base):
             self.assertEqual(steward._is_operator(), want, env)
 
     def test_webhook_and_api_server_cannot_setup_publish_or_read_pack(self):
-        for platform in ("webhook", "api_server", "msgraph_webhook"):
+        # TeamShift fork: api_server is the owner's portal (tests/test_teamshift.py covers it)
+        for platform in ("webhook", "msgraph_webhook"):
             self.session(platform=platform, chat_id="anything", chat_type="")
             self.refused(self.call("steward_setup", departments=[{"name": "X"}], schedule_jobs=False))
             self.refused(self.call("steward_publish", confirm=True), "Only the founder")
@@ -326,7 +332,7 @@ class PublishAuthzTests(Base):
     def test_cron_publish_refused_even_with_allow_agent_scheduling(self):
         self.cron_run(allow=True)
         self.job_id = "anything"
-        self.refused(self.call("steward_publish", confirm=True), "never runs inside a cron run")
+        self.refused(self.call("steward_publish", confirm=True), "never runs inside a scheduled run")
         self.assertEqual(self.cron.calls, [])
 
     def test_translated_text_checked_and_returned(self):
