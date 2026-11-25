@@ -64,9 +64,10 @@ def _dispatch(name: str, args: dict) -> str:
 
 # The trusted operator is the workspace owner (TeamShift fork, enckequity/teamshift#4650):
 #   * a person at this machine: CLI, TUI, desktop app or the gateway's LOCAL platform;
-#   * the owner's signed-in portal (the API server platform), which the host treats as the owner:
-#     only from a non-group session that carries no chat sender (a portal turn binds none), so a
-#     future shared-room path that names its member fails closed;
+#   * the API server platform (the owner's portal): this is the workspace's own authenticated API, so
+#     ANY caller holding the owner's API key counts as the owner. The host binds no portal marker, chat
+#     type or sender on these turns, so nothing narrower can be checked; the group / sender checks in
+#     _is_portal are defensive only and do not tell a portal apart from another key holder;
 #   * the owner's own direct chat on a messaging platform, when its "platform:user_id" is listed
 #     in the plugin setting owner_ids (plugins.entries.steward.settings.owner_ids). Never a group.
 # Webhooks, Microsoft Graph webhooks, every other chat and every cron run are NOT the operator. An
@@ -171,7 +172,8 @@ def _is_owner_chat(s: dict) -> bool:
 
 
 def _is_portal(s: dict) -> bool:
-    """The owner's signed-in portal: the API server platform, never a group, no chat sender bound."""
+    """The API server platform: any caller with the owner's API key is the owner. The group and sender
+    checks are defensive only (the host binds neither on API server turns today)."""
     return (s["platform"].lower() in _PORTAL_SURFACES and s["source"].lower() in _OPERATOR_SURFACES
             and not _in_group(s) and not s["user_id"] and not s["user_id_alt"])
 
@@ -191,11 +193,9 @@ def _is_operator() -> bool:
 
 def _schedule_card_blocked() -> bool:
     """True when a job Steward creates would be saved with no "Schedule this job?" card because nobody
-    can answer one on this surface (the portal's API server, webhooks). The machine itself and an
-    explicit approvals-off setting keep the host's own behaviour; "already allowed new jobs" is consent."""
-    s = _session_identity()
-    if _is_local(s) or _in_cron():   # cron scheduling has its own gate (_cron_scheduling_blocked)
-        return False
+    can answer one: the API server, webhooks, cron runs and one-shot local runs (`chat -q`) alike.
+    An explicit approvals-off setting keeps the host's own behaviour; "already allowed new jobs" is
+    consent."""
     try:
         reason = _card_skip_reason()
     except Exception:

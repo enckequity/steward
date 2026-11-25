@@ -377,6 +377,8 @@ class ToolTests(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         self._home = steward._home
         steward._home = lambda: self.tmp
+        self._saved_card = steward._card_skip_reason
+        steward._card_skip_reason = lambda: None   # a session where the host shows its schedule card
         self.cron = FakeCron()
 
         class Ctx:
@@ -385,6 +387,7 @@ class ToolTests(unittest.TestCase):
 
     def tearDown(self):
         steward._home = self._home
+        steward._card_skip_reason = self._saved_card
         steward._CTX = None
 
     def call(self, name, **args):

@@ -32,6 +32,8 @@ class Base(unittest.TestCase):
         self.outside = Path(tempfile.mkdtemp())
         self._home = steward._home
         steward._home = lambda: self.home
+        self._saved_card = steward._card_skip_reason
+        steward._card_skip_reason = lambda: None   # a session where the host shows its schedule card
         self._env = os.environ.get("HERMES_HOME")
         os.environ["HERMES_HOME"] = str(self.home)
 
@@ -41,6 +43,7 @@ class Base(unittest.TestCase):
 
     def tearDown(self):
         steward._home = self._home
+        steward._card_skip_reason = self._saved_card
         steward._CTX = None
         if self._env is None:
             os.environ.pop("HERMES_HOME", None)

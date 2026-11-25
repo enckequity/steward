@@ -200,6 +200,13 @@ class ScheduleCardTests(Base):
         self.refused(r)
         self.assertEqual(self.cron.calls, [])
 
+    def test_local_session_without_a_card_schedules_nothing(self):
+        self.session(platform="", source="cli", chat_type="")
+        self.card = "nobody can answer an approval here"
+        r = self.call("steward_setup", **SETUP)
+        self.assertTrue(r["success"], r)
+        self.assertEqual(self.cron.calls, [])
+
     def test_allowed_new_jobs_grant_still_schedules(self):
         self.owner_dm()
         self.card = "the user already allowed new jobs"
@@ -239,7 +246,7 @@ ENGINE_SCRIPT = textwrap.dedent('''
         cards.append(kw.get("description", ""))
         return {"approved": mode == "approve", "outcome": "approved" if mode == "approve" else "denied"}
     approval._run_approval_gate = gate
-    if mode != "portal":
+    if mode not in ("portal", "local_q"):
         # a chat surface where the host can ask (the live gateway binds one); the portal keeps the real answer
         approval.schedule_card_skip_reason = lambda **kw: None
 
@@ -254,6 +261,10 @@ ENGINE_SCRIPT = textwrap.dedent('''
     steward._CTX = Ctx()
     if mode == "portal":
         set_session_vars(platform="api_server", chat_id="portal-chat")
+    elif mode == "local_q":
+        # a one-shot local run (`chat -q`): the machine itself, but nobody is there to answer a card
+        os.environ["HERMES_SINGLE_QUERY_SESSION"] = "1"
+        set_session_vars(source="cli")
     else:
         set_session_vars(platform="relay", chat_id="+15550001111", chat_type="dm", user_id="+15550001111")
     r = json.loads(steward.HANDLERS["steward_setup"]({
@@ -292,6 +303,14 @@ class RealEngineCardTests(unittest.TestCase):
         self.assertEqual(len(r["cards"]), 4, r)
         self.assertEqual(len(r["saved"]), 4, r)
         self.assertTrue(r["result"]["success"], r["result"])
+
+    def test_local_one_shot_run_without_a_card_schedules_nothing(self):
+        r = self.run_engine("local_q")
+        self.assertTrue(r["result"]["success"], r["result"])
+        self.assertIn("approve", " ".join(r["result"]["notes"]))
+        self.assertEqual(r["dispatched"], [])
+        self.assertEqual(r["cards"], [])
+        self.assertEqual(r["saved"], [])
 
     def test_portal_without_a_card_schedules_nothing(self):
         r = self.run_engine("portal")
